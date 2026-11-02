@@ -1,0 +1,7 @@
+SPUD's layer-streaming design (weights in pinned host memory, a small pool of device slots,
+copies on a side stream overlapped with compute, a pre-flight memory plan, bit-exactness
+checks against a resident run, and the RAM headroom rule of 70% free / 55% total) is inspired
+by Soup, https://github.com/MakazhanAlpamys/Soup, licensed under the Apache License 2.0.
+SPUD's implementation is independent: no Soup source code is included.
+
+The bundled policy spud/assets/zoomies_policy.pt comes from https://github.com/nonberw/zoomies (MIT).

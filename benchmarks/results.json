@@ -1,0 +1,97 @@
+{
+  "hardware": {
+    "cpu_threads": 20,
+    "ram_total": 15.711418151855469,
+    "ram_free": 3.627685546875,
+    "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+    "vram_total": 3.99951171875,
+    "vram_free": 3.212597656995058,
+    "h2d_gbps": 10.515390851858632,
+    "os": "Windows 11",
+    "gpu_tflops": 18.5520858062673,
+    "cpu_gflops": 453.5595770049024,
+    "limited": false
+  },
+  "sweep_1b": {
+    "resident_ms": {
+      "64": 34.9063666665946,
+      "256": 44.0485999994659,
+      "1024": 156.94693333352916,
+      "4096": 629.1566999995363,
+      "8192": 1201.4079333336365
+    },
+    "streamed_ms": {
+      "64": 159.68076666710354,
+      "256": 161.88569999940228,
+      "1024": 170.84816666708016,
+      "4096": 638.5374333343256,
+      "8192": 1211.214566667574
+    },
+    "bit_exact": {
+      "64": true,
+      "256": true,
+      "1024": true,
+      "4096": true,
+      "8192": true
+    },
+    "resident_peak_gib": null,
+    "streamed_peak_gib": 0.712254524230957
+  },
+  "two_b": {
+    "params_b": 2.038726656,
+    "batch": 4096,
+    "streamed_ms": 1818.7688666669903,
+    "streamed_peak_gib": 0.5269947052001953,
+    "resident_spill_ms": 14916.723950000232
+  },
+  "mass": [
+    {
+      "robots": 1024,
+      "threads": 20,
+      "robot_steps_per_s": 88235.57289495128,
+      "upright": 1.0
+    },
+    {
+      "robots": 1024,
+      "threads": 2,
+      "robot_steps_per_s": 20104.56731002377,
+      "upright": 1.0
+    },
+    {
+      "robots": 4096,
+      "threads": 20,
+      "robot_steps_per_s": 94204.22460857204,
+      "upright": 1.0
+    },
+    {
+      "robots": 4096,
+      "threads": 2,
+      "robot_steps_per_s": 20739.65494939196,
+      "upright": 1.0
+    },
+    {
+      "robots": 16384,
+      "threads": 20,
+      "robot_steps_per_s": 93672.22865221724,
+      "upright": 1.0
+    },
+    {
+      "robots": 16384,
+      "threads": 2,
+      "robot_steps_per_s": 22164.455488811334,
+      "upright": 1.0
+    },
+    {
+      "robots": 65536,
+      "threads": 20,
+      "robot_steps_per_s": 84779.99995781742,
+      "upright": 1.0
+    },
+    {
+      "robots": 65536,
+      "threads": 2,
+      "robot_steps_per_s": 23932.35857151426,
+      "upright": 1.0
+    }
+  ]
+}
