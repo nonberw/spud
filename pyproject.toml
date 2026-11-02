@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spud"
-version = "0.1.0"
-description = "Run big robot simulations and models too big for your GPU on a potato: layer streaming, planner, mass simulation"
+version = "0.2.0"
+description = "Isaac-lite for weak laptops: YAML scenes, sensors, synthetic datasets, plus layer streaming for models too big for your GPU and 65k-robot simulation"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "nonberw" }]
@@ -15,6 +15,8 @@ dependencies = [
   "mujoco>=3.2",
   "torch>=2.2",
   "pillow>=10.0",
+  "pyyaml>=6.0",
+  "armageddon @ git+https://github.com/nonberw/armageddon",
   "zoomies @ git+https://github.com/nonberw/zoomies",
 ]
 

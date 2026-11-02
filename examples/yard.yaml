@@ -1,0 +1,17 @@
+# A yard: rough ground, a pack of trained dogs, an arm, a pile of random boxes, and sensors.
+name: yard
+quality: auto
+terrain: {type: rough, size: [16, 16], height: 0.06}
+light: day
+robots:
+  - {type: zoomie, count: 9, layout: grid, spacing: 1.3, origin: [-2, 0], command: [0.5, 0, 0]}
+  - {type: arm, pos: [3.5, 0, 0]}
+objects:
+  - {type: box, size: [0.04, 0.04, 0.04], count: 25, region: [[2.6, -1.2], [4.4, 1.2]], rgba: random, class: block}
+  - {type: sphere, radius: 0.06, count: 8, region: [[0, -3], [3, 3]], rgba: random, class: ball}
+sensors:
+  - {type: camera, name: overview, pos: [-4, -7, 5], lookat: [1, 0, 0], width: 320, height: 240}
+  - {type: camera, name: dogcam, robot: zoomie4, width: 160, height: 120}
+  - {type: lidar, name: scan, robot: zoomie4, rays: 360, channels: 4, fov: [-10, 10], range: 6}
+  - {type: imu, name: imu, robot: zoomie4}
+  - {type: contacts, name: touch, robot: zoomie4}

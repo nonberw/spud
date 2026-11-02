@@ -6,6 +6,9 @@
     spud swarm --robots 65536                    many small worlds of trained Zoomies, all cores
     spud world --robots 256 [--gif out.gif]      one big world of trained Zoomies
     spud brain --model 2b --robots 4096          a too-big-for-your-GPU brain drives a swarm
+    spud view  examples/yard.yaml                interactive scene from a YAML file, live sensors
+    spud scene examples/yard.yaml --gif out.gif  run a scene headless: speed, sensor rates, GIF
+    spud gen   examples/blocks.yaml --frames 200 synthetic dataset: RGB, depth, masks, boxes (JSON)
 
 Every command takes --vram/--ram/--threads/--cpu-only to pretend the machine is weaker.
 """
@@ -196,6 +199,53 @@ def cmd_brain(args):
     zm.sim.close()
 
 
+def _scene(args):
+    from .quality import pick_quality
+    from .scene import build_scene
+
+    hw = _hw(args, measure=False)
+    q = pick_quality(args.quality, hw)
+    t0 = time.perf_counter()
+    sc = build_scene(args.scene, quality=q)
+    print(f"scene '{sc.cfg.get('name', args.scene)}': {sc.model.nbody} bodies, {sc.model.nv:,} DoF, "
+          f"{sum(len(g.names) for g in sc.groups)} robots, {len(sc.objects)} objects, {len(sc.sensors)} sensors; "
+          f"quality={q.name} ({'shadows' if q.shadows else 'no shadows'}); built in {time.perf_counter() - t0:.1f}s")
+    return sc
+
+
+def cmd_view(args):
+    from .view import view
+
+    view(_scene(args), args.out)
+
+
+def cmd_scene(args):
+    sc = _scene(args)
+    if args.gif:
+        from .render import render_scene_gif
+
+        render_scene_gif(sc, args.gif, seconds=args.seconds)
+        return
+    t0 = time.perf_counter()
+    for _ in range(args.steps):
+        sc.step()
+    dt = time.perf_counter() - t0
+    print(f"physics + controllers: {args.steps * 0.02 / dt:.2f}x real time ({args.steps / dt:.0f} control steps/s), upright {sc.upright()}")
+    for s in sc.sensors:
+        s.read()
+        t0 = time.perf_counter()
+        for _ in range(5):
+            s.read()
+        print(f"  {type(s).__name__:8s} {s.name:10s} {5 / (time.perf_counter() - t0):7.0f} reads/s")
+
+
+def cmd_gen(args):
+    from .replicator import generate
+
+    sc = _scene(args)
+    generate(sc, args.out, frames=args.frames, camera=args.camera, settle=args.settle, seed=args.seed)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spud", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -241,6 +291,25 @@ def main(argv=None):
     p.add_argument("--model", default="2b", choices=["tiny", "1b", "2b", "3b"])
     p.add_argument("--robots", type=int, default=4096)
     p.add_argument("--steps", type=int, default=3)
+
+    for name, fn, helptext in (("view", cmd_view, "interactive scene window"),
+                               ("scene", cmd_scene, "run a scene headless"),
+                               ("gen", cmd_gen, "generate a synthetic dataset")):
+        p = add(name, fn, help=helptext)
+        p.add_argument("scene", help="scene YAML file")
+        p.add_argument("--quality", default="auto", choices=["auto", "potato", "laptop", "desktop"])
+        if name == "view":
+            p.add_argument("--out", default="captures")
+        if name == "scene":
+            p.add_argument("--steps", type=int, default=250)
+            p.add_argument("--gif")
+            p.add_argument("--seconds", type=float, default=8.0)
+        if name == "gen":
+            p.add_argument("--out", default="dataset")
+            p.add_argument("--frames", type=int, default=100)
+            p.add_argument("--camera", help="camera sensor name (default: the first camera)")
+            p.add_argument("--settle", type=int, default=40, help="physics steps before each capture")
+            p.add_argument("--seed", type=int, default=0)
 
     args = ap.parse_args(argv)
     args.fn(args)

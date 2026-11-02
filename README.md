@@ -16,6 +16,7 @@
 - **Huge simulations.** **65,536 trained robots** walking at once at **~85k robot-steps/s**, in **0.1 GB** of RAM for the simulator, on all CPU cores (~24k on 2 cores). One big world with **1,024 robots** (18,432 DoF) works too, and everyone stays on their feet.
 - **Even weaker hardware.** `--vram 1 --ram 4 --threads 2` makes your machine pretend to be a potato. With those limits, a **3.15B-param** brain drives **16,384** robots in **0.69 GB** of VRAM, streaming its weights from disk.
 - **`spud plan` tells you before you start**: will it fit, in which mode, how fast. Its predictions landed within **-2% to +7%** of measured runs here.
+- **Isaac-lite (v0.2):** scenes from one YAML file (robots, your own URDF/MJCF, objects, rough terrain, stairs, lights), sensors (RGB/depth/segmentation cameras, lidar, IMU, contacts), a domain-randomized dataset generator with COCO labels, an interactive viewer, and quality presets picked from your hardware. A yard with 10 robots, 33 objects and 5 sensors runs at **11x real time**.
 
 ## Why
 
@@ -113,6 +114,68 @@ Robot-steps per second, including the trained policy. These are from `scripts/be
 - **The disk store was measured with Windows' file cache warm,** so "disk" mostly meant RAM. On a machine that truly lacks RAM, expect it to be bounded by your SSD's read speed. The planner assumes a conservative 1.5 GiB/s.
 - **`--ram` is a budget SPUD respects, not an OS limit.** `--vram` is a real cap on PyTorch's allocator.
 
+## Isaac-lite: scenes, sensors, datasets (v0.2)
+
+![yard](assets/yard.gif)
+
+*`spud scene examples/yard.yaml --gif yard.gif`: nine trained dogs on rough ground, an arm and a pile of blocks. The pink ring is one dog's lidar hitting the world, and the inset is the camera riding on that dog.*
+
+[Isaac Sim](https://developer.nvidia.com/isaac/sim) is the reference robotics simulator, and it wants an RTX card with 8+ GB of VRAM and 32 GB of RAM. SPUD takes the parts of that workflow that matter most for robot learning and makes them fit a laptop.
+
+**A whole scene is one YAML file:**
+
+```yaml
+name: yard
+quality: auto                      # potato | laptop | desktop | auto (picked from your hardware)
+terrain: {type: rough, size: [16, 16], height: 0.06}     # flat | rough (heightfield) | stairs
+light: day                         # day | studio | night
+robots:
+  - {type: zoomie, count: 9, layout: grid, spacing: 1.3, command: [0.5, 0, 0]}   # trained, walks
+  - {type: arm, pos: [3.5, 0, 0]}                                                # holds its pose
+  - {type: urdf, file: my_robot.urdf, pos: [0, 4, 0.5], free: true}              # your own robot
+objects:
+  - {type: box, size: [0.04, 0.04, 0.04], count: 25, region: [[2.6, -1.2], [4.4, 1.2]], rgba: random, class: block}
+sensors:
+  - {type: camera, name: overview, pos: [-4, -7, 5], lookat: [1, 0, 0], width: 320, height: 240}
+  - {type: camera, name: dogcam, robot: zoomie4}               # rides on the robot
+  - {type: lidar, name: scan, robot: zoomie4, rays: 360, channels: 4, fov: [-10, 10], range: 6}
+  - {type: imu, name: imu, robot: zoomie4}
+  - {type: contacts, name: touch, robot: zoomie4}
+```
+
+**Sensors** (`spud/sensors.py`), measured in the yard scene on this laptop:
+
+| Sensor | What you get | Reads/s |
+|---|---|---|
+| Camera 320x240 | RGB + metric depth + instance segmentation | 214 |
+| Camera 160x120 on a robot | same, following the robot | 367 |
+| Lidar, 4 x 360 rays | distances, hit points, hit geom ids (`mj_multiRay`, one call) | 711 |
+| IMU | orientation, gyro, accelerometer (specific force) | 68,000 |
+| Contacts | which of the robot's geoms touch what, with normal forces | 4,500 |
+
+Two bugs worth knowing about, both fixed and covered by tests:
+
+- **The IMU first read [9.9, 0, 9.95] m/s^2 standing still.** MuJoCo's body acceleration already contains gravity, so subtracting it again was wrong, and its local-frame mode didn't match MuJoCo's own `<accelerometer>`. SPUD now rotates the world-frame value itself, checked against the built-in sensor. At rest it reads |a| = 9.82.
+- **Segmentation boxes were 130 px wide for a 15 px cube.** Anti-aliasing blends the color-encoded ids of two objects at their edges into a third, wrong id. Masks now get their own renderer with MSAA off, and boxes are tight.
+
+**Datasets, Replicator-style** (`spud gen`): every frame, objects are re-scattered and *dropped* so they settle physically, recolored, the lights and camera are jittered, and RGB, depth (float16 meters) and instance masks are written with COCO JSON labels (boxes, areas, categories).
+
+![dataset](assets/replicator.png)
+
+*Left to right: RGB with boxes, depth, instance masks. `examples/blocks.yaml`, three classes, ~18 labeled objects per frame.* On this laptop: **56 labeled frames/s including physics settling** (250 frames/s for rendering alone), so 1,000 frames in about 20 seconds.
+
+**Quality presets** (`spud/quality.py`): shadows, shadow-map size, render caps, default camera size and solver iterations, picked from the hardware. Physics accuracy is not traded away: the timestep stays what the robots were trained at.
+
+| Preset | Picked when | Shadows | Camera default | Yard scene speed |
+|---|---|---|---|---|
+| potato | no GPU, or <= 4 threads, or < 6 GB RAM | off | 160x120 | 8.3x real time on 2 threads |
+| laptop | < 6 GB VRAM or < 12 threads | on | 320x240 | 11x real time |
+| desktop | otherwise | on, 4K shadow map | 640x480 | |
+
+**`spud view scene.yaml`** opens the scene in MuJoCo's viewer with the controllers running. Arrows drive the dogs, space pauses, C saves every camera (RGB, depth, colorized masks) to PNG, and L toggles lidar points drawn live in the world.
+
+**What this is not:** Isaac Sim has photoreal RTX rendering, GPU physics for huge rigid-body and soft-body scenes, a ROS 2 bridge, Omniverse/USD assets and a full editor. SPUD has MuJoCo's rasterizer, CPU physics, YAML instead of USD, and no ROS bridge (yet). The lidar is an ideal geometric raycast with no noise model. URDFs go through MuJoCo's importer, so their mesh paths must resolve. What SPUD gives you instead is that all of it runs on the laptop you already have.
+
 ## Use it
 
 ```bash
@@ -155,7 +218,21 @@ A too-big brain drives a swarm, on a pretend potato:
 spud brain --model 3b --robots 16384 --vram 1 --ram 4 --threads 2
 ```
 
-Every command takes `--vram`, `--ram`, `--threads` and `--cpu-only`. Reproduce every number above:
+Scenes from YAML: look around live, run headless, or make a dataset:
+
+```bash
+spud view examples/yard.yaml
+```
+
+```bash
+spud scene examples/yard.yaml --gif yard.gif
+```
+
+```bash
+spud gen examples/blocks.yaml --frames 1000 --out dataset
+```
+
+Every command takes `--vram`, `--ram`, `--threads` and `--cpu-only`, and the scene commands take `--quality`. Reproduce every number above:
 
 ```bash
 python scripts/benchmark.py
@@ -185,10 +262,17 @@ spud/
   mass.py         many small worlds on MuJoCo's thread pool, RAM-budgeted, checkpoint/resume
   swarm.py        one big world of robots via MjSpec.attach
   zoomie_brain.py observations/actions for Zoomies, the trained policy, and the streamed big brain
-  render.py       the GIF
-  cli.py          `spud doctor | plan | bench | swarm | world | brain`
+  scene.py        YAML scenes: terrain, lights, robots (zoomie, arm, URDF, MJCF), objects, controllers
+  sensors.py      cameras (RGB / depth / segmentation), lidar, IMU, contacts
+  replicator.py   domain-randomized dataset generation with COCO labels
+  quality.py      potato / laptop / desktop presets picked from the hardware
+  view.py         interactive viewer with live lidar and camera capture
+  render.py       the GIFs
+  cli.py          `spud doctor | plan | bench | swarm | world | brain | view | scene | gen`
+examples/         yard.yaml (robots + sensors), blocks.yaml (dataset tabletop)
 scripts/benchmark.py   every headline number, plus benchmarks/spud.png
-tests/            bit-exactness for every store, planner logic, sim determinism under chunking, resume
+tests/            bit-exactness, planner, sim determinism and resume, scenes, URDF import, lidar vs. a known wall,
+                  IMU at rest, mask tightness, COCO validity, presets (29 tests)
 ```
 
 ## Part of a series

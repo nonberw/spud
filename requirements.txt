@@ -2,6 +2,8 @@ numpy>=1.26
 mujoco>=3.2
 torch>=2.2
 pillow>=10.0
+pyyaml>=6.0
+armageddon @ git+https://github.com/nonberw/armageddon
 matplotlib>=3.8
 pytest>=8.0
 zoomies @ git+https://github.com/nonberw/zoomies
