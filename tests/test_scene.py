@@ -126,3 +126,13 @@ def test_quality_presets():
     assert auto_preset(_hw()) == "laptop"
     assert auto_preset(_hw(vram_total=12, cpu_threads=24)) == "desktop"
     assert not PRESETS["potato"].shadows and PRESETS["desktop"].shadows
+
+
+def test_dogs_walk_off_the_rough_patch_and_keep_walking():
+    # Regression: found by the live ROS 2 CI run, where dogs walked off the heightfield and fell out of the world.
+    sc = build_scene({"terrain": {"type": "rough", "size": [3, 3], "height": 0.04, "resolution": 32},
+                      "robots": [{"type": "zoomie", "count": 2, "spacing": 1.0, "command": [0.8, 0, 0]}]}, quality="potato")
+    for _ in range(300):  # 6 s at ~0.7 m/s: far past the 1.5 m edge
+        sc.step()
+    assert sc.data.qpos[sc.groups[0].qpos_idx[:, 0]].min() > 2.0
+    assert sc.upright()["zoomie"] == 1.0

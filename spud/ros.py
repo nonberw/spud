@@ -297,5 +297,8 @@ class Bridge:
                 self.tx.spin_once()
             if realtime:
                 clock += 0.02
+                lag = time.perf_counter() - clock
+                if lag > 0.1:  # fell behind (startup, a slow render): resync instead of bursting to catch up
+                    clock = time.perf_counter()
                 time.sleep(max(0.0, clock - time.perf_counter()))
         return time.perf_counter() - t0

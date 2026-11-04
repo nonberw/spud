@@ -33,7 +33,8 @@ echo "== data"
 ranges=$(timeout 6 ros2 topic echo --once --field ranges /scan/scan 2>/dev/null | head -c 400)
 echo "LaserScan ranges: ${ranges:0:120}..."
 [ -n "$ranges" ] || bad "no LaserScan received"
-az=$(timeout 6 ros2 topic echo --once --field linear_acceleration.z /imu/imu 2>/dev/null | head -1)
+num() { grep -m1 -E '^-?[0-9]'; }  # ROS 2 may print "A message was lost!!!" before the value
+az=$(timeout 6 ros2 topic echo --once --field linear_acceleration.z /imu/imu 2>/dev/null | num)
 echo "Imu linear_acceleration.z: $az (gravity, ~9.8 when upright)"
 awk -v a="$az" 'BEGIN{exit !(a>7 && a<13)}' || bad "imu accel.z $az"
 img=$(timeout 6 ros2 topic echo --once --no-arr /overview/image_raw 2>/dev/null)
@@ -41,7 +42,7 @@ echo "$img" | grep -E "^(height|width|encoding|step):"
 echo "$img" | grep -q "encoding: rgb8" || bad "image not rgb8"
 
 echo "== cmd_vel drives zoomie4"
-vx() { timeout 6 ros2 topic echo --once --field twist.twist.linear.x /zoomie4/odom 2>/dev/null | head -1; }
+vx() { timeout 6 ros2 topic echo --once --field twist.twist.linear.x /zoomie4/odom 2>/dev/null | num; }
 v0=$(vx)
 timeout 6 ros2 topic pub -r 10 /zoomie4/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.2}}" >/dev/null 2>&1
 v1=$(vx)

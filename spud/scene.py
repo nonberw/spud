@@ -81,6 +81,10 @@ def _add_terrain(spec: mujoco.MjSpec, cfg: dict, rng) -> float:
                         userdata=list(_smooth_noise(n, rng).ravel()))
         spec.worldbody.add_geom(name="terrain", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
                                 material="ground", contype=0, conaffinity=1)
+        # Flat ground beyond the patch: robots that walk off its edge keep walking instead of falling
+        # out of the world (found by the ROS 2 CI run, where dogs walked for minutes).
+        spec.worldbody.add_geom(name="ground_beyond", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0, 0, 0.1],
+                                material="ground", contype=0, conaffinity=1)
         return h
     spec.worldbody.add_geom(name="terrain", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[sx / 2, sy / 2, 0.1],
                             material="ground", contype=0, conaffinity=1)
