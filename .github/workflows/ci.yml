@@ -26,12 +26,13 @@ jobs:
         run: pytest -q
 
   ros2-live:
-    # The real thing: ROS 2 Jazzy + rosbridge in Docker, SPUD publishing the yard scene into it,
+    # The real thing: ROS 2 Jazzy + rosbridge in Docker, SPUD publishing a scene into it,
     # and ROS-side checks of topics, message types, rates, data, and cmd_vel driving a robot.
     runs-on: ubuntu-24.04
     env:
       MUJOCO_GL: osmesa
       PYOPENGL_PLATFORM: osmesa
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +51,7 @@ jobs:
         run: |
           for i in $(seq 1 60); do (echo > /dev/tcp/localhost/9090) 2>/dev/null && exit 0; sleep 2; done
           docker logs ros; exit 1
-      - name: Publish the yard scene into ROS 2
+      - name: Publish a scene into ROS 2
         run: |
           nohup spud ros examples/ros_demo.yaml --transport rosbridge --url ws://localhost:9090 --seconds 600 > spud_ros.log 2>&1 &
           sleep 25

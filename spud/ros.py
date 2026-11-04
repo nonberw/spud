@@ -247,7 +247,12 @@ class Bridge:
 
     @staticmethod
     def _cmd_handler(group, row):
+        seen = {"first": True}
+
         def on_twist(msg):
+            if seen["first"]:
+                seen["first"] = False
+                print(f"cmd_vel received for {group.names[row]}: {msg}", flush=True)
             lin, ang = msg.get("linear", {}), msg.get("angular", {})
             group.command[row] = (np.clip(lin.get("x", 0.0), -0.6, 1.2), np.clip(lin.get("y", 0.0), -0.5, 0.5),
                                   np.clip(ang.get("z", 0.0), -1.0, 1.0))

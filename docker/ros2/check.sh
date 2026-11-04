@@ -19,7 +19,9 @@ echo "$topics" | sort
 for t in $need; do echo "$topics" | grep -qx "$t" || bad "missing topic $t"; done
 
 echo "== types"
-check_type() { local got; got=$(ros2 topic type "$1"); echo "$1: $got"; [ "$got" = "$2" ] || bad "$1 is $got, expected $2"; }
+typed=$(ros2 topic list -t 2>/dev/null)
+check_type() { local got; got=$(echo "$typed" | awk -v t="$1" '$1==t {gsub(/[\[\]]/, "", $2); print $2}');
+  echo "$1: $got"; [ "$got" = "$2" ] || bad "$1 is '$got', expected $2"; }
 check_type /scan/scan sensor_msgs/msg/LaserScan
 check_type /imu/imu sensor_msgs/msg/Imu
 check_type /front/image_raw sensor_msgs/msg/Image
@@ -41,9 +43,11 @@ ratio /imu/imu 1.0
 ratio /front/image_raw 0.1
 
 echo "== data"
-ranges=$(timeout 6 ros2 topic echo --once --field ranges /scan/scan 2>/dev/null | head -c 300)
-echo "LaserScan ranges: ${ranges:0:110}..."
-echo "$ranges" | grep -qE "[0-9]\.[0-9]" || bad "LaserScan has no finite ranges (the walls should be hit)"
+ranges=$(timeout 6 ros2 topic echo --once --field ranges /scan/scan 2>/dev/null)
+finite=$(echo "$ranges" | tr ',[]()' '
+' | grep -cE '^ *[0-9]+\.[0-9]')
+echo "LaserScan: $finite of 360 rays hit something (two walls, 4 m ahead and 3 m to the left)"
+[ "$finite" -gt 20 ] || bad "LaserScan has only $finite finite ranges"
 az=$(stream /imu/imu linear_acceleration.z 4 | mean)
 echo "Imu linear_acceleration.z, mean over 4 s while standing: $az m/s^2 (gravity: 9.81)"
 awk -v a="$az" 'BEGIN{exit !(a > 9.3 && a < 10.3)}' || bad "imu mean accel.z $az"
@@ -53,10 +57,13 @@ echo "$img" | grep -q "encoding: rgb8" || bad "image not rgb8"
 
 echo "== cmd_vel drives zoomie0"
 v0=$(stream /zoomie0/odom twist.twist.linear.x 3 | mean)
-timeout 12 ros2 topic pub -r 10 /zoomie0/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.0}}" >/dev/null 2>&1 &
-sleep 6
+timeout 14 ros2 topic pub -r 10 /zoomie0/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.0}}" > /tmp/pub.log 2>&1 &
+sleep 4
+echo "-- cmd_vel endpoints while publishing:"; ros2 topic info -v /zoomie0/cmd_vel 2>&1 | grep -E "Node name|Endpoint type|Reliability|Durability|Publisher count|Subscription count"
+sleep 2
 v1=$(stream /zoomie0/odom twist.twist.linear.x 4 | mean)
 wait
+echo "-- ros2 topic pub said:"; head -5 /tmp/pub.log
 echo "zoomie0 mean forward speed: standing $v0 m/s -> with cmd_vel linear.x=1.0: $v1 m/s"
 awk -v a="$v0" 'BEGIN{exit !(a < 0.15 && a > -0.15)}' || bad "dog was not standing still ($v0)"
 awk -v b="$v1" 'BEGIN{exit !(b > 0.5)}' || bad "cmd_vel did not make the dog walk ($v1)"
