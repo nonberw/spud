@@ -131,3 +131,26 @@ def test_ros_bridge_topics_rates_and_cmd_vel():
     assert {x["child_frame_id"] for x in tf["transforms"]} == {"zoomie0/base_link", "zoomie1/base_link"}
     tx.handlers["/zoomie1/cmd_vel"]({"linear": {"x": 5.0, "y": 0.0}, "angular": {"z": -0.5}})
     np.testing.assert_allclose(sc.groups[0].command[1], [1.2, 0.0, -0.5])  # clipped to what the policy learned
+
+
+def test_ros_odometry_matches_real_motion():
+    # Regression: MuJoCo's local-frame velocity put the forward speed on z.
+    from pathlib import Path
+
+    from spud.ros import Bridge, MemoryTransport
+
+    sc = build_scene(Path(__file__).parents[1] / "examples" / "ros_demo.yaml")
+    tx = MemoryTransport()
+    br = Bridge(sc, tx)
+    br.run(seconds=1.0, realtime=False)
+    b = br.bodies["zoomie0"]
+    x0 = sc.data.xpos[b].copy()
+    tx.handlers["/zoomie0/cmd_vel"]({"linear": {"x": 1.0}, "angular": {}})
+    tx.published.clear()
+    br.run(seconds=4.0, realtime=False)
+    true_speed = np.linalg.norm((sc.data.xpos[b] - x0)[:2]) / 4.0
+    odom = [m["twist"]["twist"]["linear"] for t, _, m in tx.published if t == "/zoomie0/odom"]
+    vx = np.mean([o["x"] for o in odom[50:]])  # skip the first second of acceleration
+    vz = np.mean([o["z"] for o in odom[50:]])
+    assert true_speed > 0.6
+    assert vx == pytest.approx(true_speed, rel=0.2) and abs(vz) < 0.1

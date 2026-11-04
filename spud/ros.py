@@ -101,10 +101,13 @@ def odometry(t, robot, model, data, body) -> dict:
     import mujoco
 
     vel = np.zeros(6)
-    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, body, vel, 1)  # local frame
+    # World frame, rotated into the body frame by hand (REP 105: odom twist is in child_frame_id).
+    # MuJoCo's flg_local=1 result did not match that frame: forward speed came out on z.
+    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, body, vel, 0)
+    R = data.xmat[body].reshape(3, 3)
     return {"header": header(t, "odom"), "child_frame_id": f"{robot}/base_link",
             "pose": {"pose": {"position": _v(pos), "orientation": _q(quat)}, "covariance": [0.0] * 36},
-            "twist": {"twist": {"linear": _v(vel[3:]), "angular": _v(vel[:3])}, "covariance": [0.0] * 36}}
+            "twist": {"twist": {"linear": _v(R.T @ vel[3:]), "angular": _v(R.T @ vel[:3])}, "covariance": [0.0] * 36}}
 
 
 def tf_msg(t, items) -> dict:

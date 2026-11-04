@@ -52,7 +52,7 @@ jobs:
           docker logs ros; exit 1
       - name: Publish the yard scene into ROS 2
         run: |
-          nohup spud ros examples/yard.yaml --transport rosbridge --url ws://localhost:9090 --quality potato --seconds 240 > spud_ros.log 2>&1 &
+          nohup spud ros examples/ros_demo.yaml --transport rosbridge --url ws://localhost:9090 --seconds 600 > spud_ros.log 2>&1 &
           sleep 25
           cat spud_ros.log
       - name: Check from inside ROS 2
