@@ -16,7 +16,7 @@
 - **Huge simulations.** **65,536 trained robots** walking at once at **~85k robot-steps/s**, in **0.1 GB** of RAM for the simulator, on all CPU cores (~24k on 2 cores). One big world with **1,024 robots** (18,432 DoF) works too, and everyone stays on their feet.
 - **Even weaker hardware.** `--vram 1 --ram 4 --threads 2` makes your machine pretend to be a potato. With those limits, a **3.15B-param** brain drives **16,384** robots in **0.69 GB** of VRAM, streaming its weights from disk.
 - **`spud plan` tells you before you start**: will it fit, in which mode, how fast. Its predictions landed within **-2% to +7%** of measured runs here.
-- **Isaac-lite (v0.2):** scenes from one YAML file (robots, your own URDF/MJCF, objects, rough terrain, stairs, lights), sensors (RGB/depth/segmentation cameras, lidar, IMU, contacts), a domain-randomized dataset generator with COCO labels, an interactive viewer, and quality presets picked from your hardware. A yard with 10 robots, 33 objects and 5 sensors runs at **11x real time**.
+- **Isaac-lite (v0.2-0.3):** GPU physics (**463k robot-steps/s**, 5x the CPU), sensor noise, photoreal path-traced frames, a ROS 2 bridge, and scenes from one YAML file (robots, your own URDF/MJCF, objects, rough terrain, stairs, lights), sensors (RGB/depth/segmentation cameras, lidar, IMU, contacts), a domain-randomized dataset generator with COCO labels, an interactive viewer, and quality presets picked from your hardware. A yard with 10 robots, 33 objects and 5 sensors runs at **11x real time**.
 
 ## Why
 
@@ -174,7 +174,37 @@ Two bugs worth knowing about, both fixed and covered by tests:
 
 **`spud view scene.yaml`** opens the scene in MuJoCo's viewer with the controllers running. Arrows drive the dogs, space pauses, C saves every camera (RGB, depth, colorized masks) to PNG, and L toggles lidar points drawn live in the world.
 
-**What this is not:** Isaac Sim has photoreal RTX rendering, GPU physics for huge rigid-body and soft-body scenes, a ROS 2 bridge, Omniverse/USD assets and a full editor. SPUD has MuJoCo's rasterizer, CPU physics, YAML instead of USD, and no ROS bridge (yet). The lidar is an ideal geometric raycast with no noise model. URDFs go through MuJoCo's importer, so their mesh paths must resolve. What SPUD gives you instead is that all of it runs on the laptop you already have.
+### v0.3: the four things v0.2 didn't have
+
+**1. Sensor noise** (`spud/noise.py`). Add `noise: true` (or a dict of overrides) to any sensor. Clean copies stay in the reading (`distance_clean`, `gyro_clean`, ...), so you can train on noisy data and still score against ground truth.
+
+| Sensor | Model | Check (measured in SPUD vs. the model) |
+|---|---|---|
+| Lidar | range noise that grows with distance, 5 mm quantization, random and grazing-angle dropouts, Lambertian intensity from the true surface normal | 2.0 cm std at 2 m; intensity 0.25 at 2 m head-on (model: 0.26) |
+| Depth camera | Kinect-style axial noise a + b(z - 0.4)^2 (Nguyen et al. 2012), holes at depth edges, min/max range | 6.6 mm std at 2 m (model: 6.1 mm) |
+| RGB camera | shot noise + read noise | |
+| IMU | white noise and bias random walk, from datasheet-style densities | gyro 0.028 rad/s std at 50 Hz (model: 0.028) |
+
+**2. GPU physics** (`spud swarm --backend gpu`): [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp) runs thousands of worlds on the graphics card, and the trained policy runs next to it on the same GPU, with zero-copy tensors and the substeps captured as a CUDA graph. Nothing crosses PCIe inside the loop.
+
+| Trained Zoomies | CPU, 20 threads | **GPU (RTX 3050 Ti Laptop)** | Upright | Walking speed (commanded 0.6) |
+|---|---|---|---|---|
+| 1,024 | 88k robot-steps/s | **208k** | 100% | 0.57 m/s |
+| 4,096 | 94k | **369k** | 100% | 0.57 m/s |
+| 16,384 | 94k | **461k** | 100% | 0.57 m/s |
+| 32,768 | ~85k | **463k** | 100% | 0.57 m/s |
+
+The dogs walk the same on GPU physics as on CPU MuJoCo (0.56-0.57 m/s on both), and 32k of them need 0.15 GB of VRAM. Driver note: Warp 1.19's default wheel needs a CUDA 13 driver. On a CUDA 12 driver (this laptop: 566.36), install NVIDIA's `warp_lang-1.19.0+cu12` wheel from the [Warp releases](https://github.com/NVIDIA/warp/releases). Without a usable GPU, the command falls back to the CPU and says why.
+
+**3. Photoreal frames** (`spud gen --photoreal`): the scene is exported to [Mitsuba 3](https://www.mitsuba-renderer.org/) and path-traced. You get soft shadows, indirect light and glossy materials, from the *same* camera, so MuJoCo's depth and masks line up pixel-for-pixel (a test checks it).
+
+![photoreal](assets/photoreal.png)
+
+*Path-traced RGB (left) and the MuJoCo instance masks for the same frames (right).* The honest part: on this laptop only Mitsuba's CPU variant runs, at **about 2 s per 320x240 frame at 48 samples per pixel**. Mitsuba's GPU variant refuses NVIDIA drivers 565-569 (this laptop has 566.36), and a driver >= 570 should unlock it. Its fast CPU variant needs LLVM installed. So: great for a few thousand dataset frames overnight, not for real time.
+
+**4. ROS 2 bridge** (`spud ros scene.yaml`): a scene shows up in ROS like a real robot. It publishes `/clock`, `/tf`, `/<robot>/odom`, `/<robot>/joint_states`, `/<lidar>/scan` (LaserScan), `/<imu>/imu` (Imu, with covariances from the noise model) and `/<camera>/image_raw` + `/<camera>/depth`, and it listens on `/<robot>/cmd_vel`, so `teleop_twist_keyboard` drives the dogs. It talks to ROS via `rclpy` when ROS 2 is installed, or via **rosbridge** (WebSocket) to ROS 2 running in Docker, WSL or another machine, which is the realistic route on Windows. The honest part: the message layout and rates are tested against an in-memory transport, but **not yet against a live ROS 2 install**.
+
+**Still not Isaac:** no soft bodies or deformables, no USD/Omniverse assets, no editor GUI. URDFs go through MuJoCo's importer, so their mesh paths must resolve.
 
 ## Use it
 
@@ -232,6 +262,22 @@ spud scene examples/yard.yaml --gif yard.gif
 spud gen examples/blocks.yaml --frames 1000 --out dataset
 ```
 
+GPU physics, photoreal datasets and ROS 2:
+
+```bash
+spud swarm --robots 32768 --backend gpu
+```
+
+```bash
+spud gen examples/blocks.yaml --frames 200 --photoreal --spp 64
+```
+
+```bash
+spud ros examples/yard.yaml --transport rosbridge --url ws://localhost:9090
+```
+
+Optional extras: `pip install "spud[gpu]"` (MuJoCo Warp), `"spud[photoreal]"` (Mitsuba 3), `"spud[ros]"` (roslibpy).
+
 Every command takes `--vram`, `--ram`, `--threads` and `--cpu-only`, and the scene commands take `--quality`. Reproduce every number above:
 
 ```bash
@@ -266,13 +312,18 @@ spud/
   sensors.py      cameras (RGB / depth / segmentation), lidar, IMU, contacts
   replicator.py   domain-randomized dataset generation with COCO labels
   quality.py      potato / laptop / desktop presets picked from the hardware
+  noise.py        lidar, depth, RGB and IMU noise models
+  gpu.py          MuJoCo Warp worlds + the policy on the same GPU
+  photoreal.py    scene -> Mitsuba 3 export, path-traced frames aligned with MuJoCo's camera
+  ros.py          ROS 2 bridge: rclpy or rosbridge, LaserScan/Imu/Image/Odometry/TF/JointState, cmd_vel
   view.py         interactive viewer with live lidar and camera capture
   render.py       the GIFs
   cli.py          `spud doctor | plan | bench | swarm | world | brain | view | scene | gen`
 examples/         yard.yaml (robots + sensors), blocks.yaml (dataset tabletop)
 scripts/benchmark.py   every headline number, plus benchmarks/spud.png
 tests/            bit-exactness, planner, sim determinism and resume, scenes, URDF import, lidar vs. a known wall,
-                  IMU at rest, mask tightness, COCO validity, presets (29 tests)
+                  IMU at rest, mask tightness, COCO validity, presets, noise statistics, GPU walking,
+                  photoreal/mask alignment, ROS topics and rates (38 tests)
 ```
 
 ## Part of a series

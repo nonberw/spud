@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spud"
-version = "0.2.0"
+version = "0.3.0"
 description = "Isaac-lite for weak laptops: YAML scenes, sensors, synthetic datasets, plus layer streaming for models too big for your GPU and 65k-robot simulation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,6 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "matplotlib>=3.8"]
+gpu = ["mujoco-warp>=3.17"]
+photoreal = ["mitsuba>=3.6"]
+ros = ["roslibpy>=2.0"]
 
 [project.scripts]
 spud = "spud.cli:main"

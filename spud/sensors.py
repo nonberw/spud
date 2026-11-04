@@ -15,6 +15,18 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
+from . import noise as nz
+
+
+def _noise_cfg(cfg, part=None):
+    """`noise: true` turns on every part; `noise: {rgb: {...}, depth: false}` picks per part."""
+    n = cfg.get("noise")
+    if isinstance(n, dict) and part is not None and part in n:
+        return n[part]
+    if isinstance(n, dict) and part is not None and any(k in n for k in ("rgb", "depth")):
+        return None
+    return n
+
 
 def _look(src, dst):
     """MjvCamera angles that put the camera at `src` looking at `dst`."""
@@ -52,6 +64,9 @@ class Camera:
         self.geom_to_obj = np.full(scene.model.ngeom + 1, -1, np.int32)
         for k, o in enumerate(scene.objects):
             self.geom_to_obj[o.geom] = k
+        self.rng = np.random.default_rng(cfg.get("seed", 0))
+        self.rgb_noise = nz.make(nz.CameraNoise, _noise_cfg(cfg, "rgb"))
+        self.depth_noise = nz.make(nz.DepthNoise, _noise_cfg(cfg, "depth"))
 
     def _renderer(self, model, msaa: bool):
         key = (id(model), self.width, self.height, msaa)
@@ -78,11 +93,15 @@ class Camera:
         if "rgb" in self.modes:
             r.update_scene(d, self.cam)
             out["rgb"] = r.render().copy()
+            if self.rgb_noise is not None:
+                out["rgb_clean"], out["rgb"] = out["rgb"], self.rgb_noise.apply(self.rng, out["rgb"])
         if "depth" in self.modes:
             r.enable_depth_rendering()
             r.update_scene(d, self.cam)
             out["depth"] = r.render().copy()
             r.disable_depth_rendering()
+            if self.depth_noise is not None:
+                out["depth_clean"], out["depth"] = out["depth"], self.depth_noise.apply(self.rng, out["depth"])
         if "segmentation" in self.modes:
             if self.seg_renderer is None:
                 self.seg_renderer = self._renderer(self.scene.model, msaa=False)
@@ -112,19 +131,27 @@ class Lidar:
         self.shape = (ch, n)
         self._geom = np.zeros(len(self.dirs_local), np.int32)
         self._dist = np.zeros(len(self.dirs_local))
+        self._normal = np.zeros(3 * len(self.dirs_local))
+        self.rng = np.random.default_rng(cfg.get("seed", 0))
+        self.noise = nz.make(nz.LidarNoise, cfg.get("noise"))
 
     def read(self) -> dict:
         m, d = self.scene.model, self.scene.data
         R = d.xmat[self.body].reshape(3, 3)
         origin = d.xpos[self.body] + R @ self.offset
         vec = (self.dirs_local @ R.T).ravel()
-        mujoco.mj_multiRay(m, d, origin, vec, None, 1, self.body, self._geom, self._dist, None,
+        mujoco.mj_multiRay(m, d, origin, vec, None, 1, self.body, self._geom, self._dist, self._normal,
                            len(self.dirs_local), self.range)
         dist = np.where(self._dist < 0, np.inf, self._dist)
+        out = {"geom_id": self._geom.reshape(self.shape), "origin": origin}
+        if self.noise is not None:
+            out["distance_clean"] = dist.reshape(self.shape)
+            dist, intensity = self.noise.apply(self.rng, dist, self._normal.reshape(-1, 3), vec.reshape(-1, 3))
+            out["intensity"] = intensity.reshape(self.shape)
         hit = np.isfinite(dist)
-        points = origin + vec.reshape(-1, 3) * np.where(hit, dist, 0.0)[:, None]
-        return {"distance": dist.reshape(self.shape), "points": points[hit], "geom_id": self._geom.reshape(self.shape),
-                "origin": origin}
+        out["points"] = origin + vec.reshape(-1, 3)[hit] * dist[hit][:, None]
+        out["distance"] = dist.reshape(self.shape)
+        return out
 
 
 class IMU:
@@ -132,6 +159,8 @@ class IMU:
         self.scene, self.name = scene, cfg.get("name", "imu")
         self.body = scene.robot_body(cfg["robot"])
         self._acc = np.zeros(6)
+        self.rng = np.random.default_rng(cfg.get("seed", 0))
+        self.noise = nz.make(nz.ImuNoise, cfg.get("noise"))
 
     def read(self) -> dict:
         m, d = self.scene.model, self.scene.data
@@ -142,7 +171,11 @@ class IMU:
         vel = np.zeros(6)
         mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, self.body, vel, 0)
         R = d.xmat[self.body].reshape(3, 3)
-        return {"quat": d.xquat[self.body].copy(), "gyro": R.T @ vel[:3], "accel": R.T @ self._acc[3:]}
+        out = {"quat": d.xquat[self.body].copy(), "gyro": R.T @ vel[:3], "accel": R.T @ self._acc[3:]}
+        if self.noise is not None:
+            out["gyro_clean"], out["accel_clean"] = out["gyro"], out["accel"]
+            out["gyro"], out["accel"] = self.noise.apply(self.rng, out["gyro"], out["accel"])
+        return out
 
 
 class Contacts:

@@ -9,6 +9,7 @@
     spud view  examples/yard.yaml                interactive scene from a YAML file, live sensors
     spud scene examples/yard.yaml --gif out.gif  run a scene headless: speed, sensor rates, GIF
     spud gen   examples/blocks.yaml --frames 200 synthetic dataset: RGB, depth, masks, boxes (JSON)
+    spud ros   examples/yard.yaml                publish the scene to ROS 2 (rclpy or rosbridge)
 
 Every command takes --vram/--ram/--threads/--cpu-only to pretend the machine is weaker.
 """
@@ -127,6 +128,8 @@ def cmd_swarm(args):
     from .zoomie_brain import TrainedBrain, ZoomieMass
 
     hw = _hw(args, measure=False)
+    if args.backend == "gpu":
+        return _swarm_gpu(args)
     brain = TrainedBrain(str(args.policy), device="cpu")
     zm = ZoomieMass(args.robots, nthread=hw.cpu_threads, ram_budget_gib=args.sim_ram)
     zm.commands[:] = (args.vx, 0.0, args.yaw)
@@ -140,11 +143,37 @@ def cmd_swarm(args):
         if args.resume and (k + 1) % 50 == 0:
             zm.sim.save(args.resume, actions=zm.actions)
     dt = time.perf_counter() - t0
-    print(f"{args.robots:,} trained Zoomies x {args.steps} steps on {hw.cpu_threads} threads: "
+    print(f"{args.robots:,} trained Zoomies x {args.steps} steps on {hw.cpu_threads} CPU threads: "
           f"{args.robots * args.steps / dt:,.0f} robot-steps/s, sim RAM {zm.sim.memory_gib:.2f} GiB (chunk {zm.sim.chunk:,})")
     print(f"upright {zm.upright().mean():.1%}, mean forward speed "
           f"{(zm.sim.qpos()[:, 0] - x0).mean() / (args.steps * 0.02):.2f} m/s (commanded {args.vx})")
     zm.sim.close()
+
+
+def _swarm_gpu(args):
+    import torch
+
+    from .gpu import GpuZoomies, available
+
+    ok, why = available()
+    if not ok:
+        print(f"GPU physics unavailable: {why}. Falling back to the CPU backend.")
+        args.backend = "cpu"
+        return cmd_swarm(args)
+    g = GpuZoomies(args.robots, str(args.policy))
+    g.commands[:, 0], g.commands[:, 2] = args.vx, args.yaw
+    g.step()
+    torch.cuda.synchronize()
+    x0 = g.qpos[:, 0].clone()
+    t0 = time.perf_counter()
+    for _ in range(args.steps):
+        g.step()
+    torch.cuda.synchronize()
+    dt = time.perf_counter() - t0
+    print(f"{args.robots:,} trained Zoomies x {args.steps} steps on the GPU (MuJoCo Warp, policy on GPU): "
+          f"{args.robots * args.steps / dt:,.0f} robot-steps/s")
+    print(f"upright {g.upright():.1%}, mean forward speed {(g.qpos[:, 0] - x0).mean().item() / (args.steps * 0.02):.2f} m/s "
+          f"(commanded {args.vx})")
 
 
 def cmd_world(args):
@@ -243,7 +272,23 @@ def cmd_gen(args):
     from .replicator import generate
 
     sc = _scene(args)
-    generate(sc, args.out, frames=args.frames, camera=args.camera, settle=args.settle, seed=args.seed)
+    generate(sc, args.out, frames=args.frames, camera=args.camera, settle=args.settle, seed=args.seed,
+             photoreal=args.photoreal, spp=args.spp)
+
+
+def cmd_ros(args):
+    from .ros import Bridge, make_transport
+
+    sc = _scene(args)
+    tx = make_transport(args.transport, args.url)
+    print(f"ROS 2 bridge up via {type(tx).__name__}; publishing /clock, /tf, odom, joint_states and sensors; "
+          f"send geometry_msgs/Twist to /<robot>/cmd_vel")
+    try:
+        Bridge(sc, tx, scan_hz=args.scan_hz, camera_hz=args.camera_hz).run(seconds=args.seconds)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        tx.close()
 
 
 def main(argv=None):
@@ -281,6 +326,8 @@ def main(argv=None):
         p.add_argument("--yaw", type=float, default=0.0)
         p.add_argument("--policy", type=Path, default=POLICY)
         if name == "swarm":
+            p.add_argument("--backend", default="cpu", choices=["cpu", "gpu"],
+                           help="gpu = MuJoCo Warp on the graphics card (needs mujoco-warp)")
             p.add_argument("--sim-ram", type=float, default=1.0, help="RAM budget for the simulator buffers, GiB")
             p.add_argument("--resume", help="checkpoint file: resume from it if present, save to it every 50 steps")
         else:
@@ -294,12 +341,19 @@ def main(argv=None):
 
     for name, fn, helptext in (("view", cmd_view, "interactive scene window"),
                                ("scene", cmd_scene, "run a scene headless"),
-                               ("gen", cmd_gen, "generate a synthetic dataset")):
+                               ("gen", cmd_gen, "generate a synthetic dataset"),
+                               ("ros", cmd_ros, "bridge a scene to ROS 2")):
         p = add(name, fn, help=helptext)
         p.add_argument("scene", help="scene YAML file")
         p.add_argument("--quality", default="auto", choices=["auto", "potato", "laptop", "desktop"])
         if name == "view":
             p.add_argument("--out", default="captures")
+        if name == "ros":
+            p.add_argument("--transport", default="auto", choices=["auto", "rclpy", "rosbridge", "memory"])
+            p.add_argument("--url", default="ws://localhost:9090", help="rosbridge_server address")
+            p.add_argument("--seconds", type=float, help="stop after this much sim time (default: run forever)")
+            p.add_argument("--scan-hz", type=float, default=10.0)
+            p.add_argument("--camera-hz", type=float, default=5.0)
         if name == "scene":
             p.add_argument("--steps", type=int, default=250)
             p.add_argument("--gif")
@@ -310,6 +364,8 @@ def main(argv=None):
             p.add_argument("--camera", help="camera sensor name (default: the first camera)")
             p.add_argument("--settle", type=int, default=40, help="physics steps before each capture")
             p.add_argument("--seed", type=int, default=0)
+            p.add_argument("--photoreal", action="store_true", help="path-trace RGB with Mitsuba 3 (slow, pretty)")
+            p.add_argument("--spp", type=int, default=64, help="samples per pixel for --photoreal")
 
     args = ap.parse_args(argv)
     args.fn(args)

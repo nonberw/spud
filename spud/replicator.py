@@ -54,7 +54,10 @@ def _jitter_lights_and_camera(scene, cam: Camera, base, rng):
     cam.cam.distance = base["distance"] * rng.uniform(0.85, 1.15)
 
 
-def generate(scene, out, frames: int = 100, camera: str | None = None, settle: int = 40, seed: int = 0):
+def generate(scene, out, frames: int = 100, camera: str | None = None, settle: int = 40, seed: int = 0,
+             photoreal: bool = False, spp: int = 64):
+    """`photoreal=True` path-traces the RGB with Mitsuba (see photoreal.py); depth and masks still come
+    from MuJoCo with the same camera, so labels stay pixel-exact."""
     out = Path(out)
     for sub in ("images", "depth", "masks"):
         (out / sub).mkdir(parents=True, exist_ok=True)
@@ -78,8 +81,13 @@ def generate(scene, out, frames: int = 100, camera: str | None = None, settle: i
         for _ in range(settle):  # let them fall and come to rest: physically plausible piles
             mujoco.mj_step(m, d)
         _jitter_lights_and_camera(scene, cam, base, rng)
+        mujoco.mj_kinematics(m, d)  # light directions reach the renderer via data.light_xdir
         tr = time.perf_counter()
         r = cam.read()
+        if photoreal:
+            from . import photoreal as pr
+
+            r["rgb"] = pr.render(m, d, cam.cam, cam.width, cam.height, spp=spp)
         t_render += time.perf_counter() - tr
         name = f"{f:06d}"
         Image.fromarray(r["rgb"]).save(out / "images" / f"{name}.png")
@@ -102,5 +110,5 @@ def generate(scene, out, frames: int = 100, camera: str | None = None, settle: i
     (out / "annotations.json").write_text(json.dumps(coco))
     dt = time.perf_counter() - t0
     print(f"wrote {frames} frames, {ann_id - 1} labeled objects ({(ann_id - 1) / max(frames, 1):.1f}/frame) to {out}/ "
-          f"in {dt:.1f}s ({frames / dt:.1f} frames/s incl. physics settling; rendering alone {frames / max(t_render, 1e-9):.0f} frames/s)")
+          f"in {dt:.1f}s ({frames / dt:.1f} frames/s incl. physics settling; rendering alone {frames / max(t_render, 1e-9):.1f} frames/s)")
     return coco
