@@ -46,7 +46,7 @@ echo "== data"
 ranges=$(timeout 6 ros2 topic echo --once --field ranges /scan/scan 2>/dev/null)
 finite=$(echo "$ranges" | tr ',[]()' '
 ' | grep -cE '^ *[0-9]+\.[0-9]')
-echo "LaserScan: $finite of 360 rays hit something (two walls, 4 m ahead and 3 m to the left)"
+echo "LaserScan: $finite of 360 rays hit something (two walls, 4 m behind and 3 m to the left)"
 [ "$finite" -gt 20 ] || bad "LaserScan has only $finite finite ranges"
 az=$(stream /imu/imu linear_acceleration.z 4 | mean)
 echo "Imu linear_acceleration.z, mean over 4 s while standing: $az m/s^2 (gravity: 9.81)"

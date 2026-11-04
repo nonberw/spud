@@ -6,7 +6,7 @@ light: day
 robots:
   - {type: zoomie, count: 1, pos: [0, 0, 0], command: [0, 0, 0]}
 objects:
-  - {type: box, size: [0.1, 3, 0.5], pos: [4, 0, 0.5], static: true, random_yaw: false, class: wall}
+  - {type: box, size: [0.1, 3, 0.5], pos: [-4, 0, 0.5], static: true, random_yaw: false, class: wall}   # behind: the dog walks +x into open space
   - {type: box, size: [3, 0.1, 0.5], pos: [0, 3, 0.5], static: true, random_yaw: false, class: wall}
 sensors:
   - {type: lidar, name: scan, robot: zoomie0, rays: 360, range: 10, noise: true}
