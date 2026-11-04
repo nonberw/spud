@@ -86,23 +86,25 @@ class Camera:
         self.cam.lookat[:] = ahead
         self.cam.distance, self.cam.azimuth, self.cam.elevation = _look(eye, ahead)
 
-    def read(self) -> dict:
+    def read(self, modes=None) -> dict:
+        """`modes` overrides the configured modes for this read (e.g. skip segmentation)."""
         if self.robot is not None:
             self._follow()
+        modes = self.modes if modes is None else modes
         r, d, out = self.renderer, self.scene.data, {}
-        if "rgb" in self.modes:
+        if "rgb" in modes:
             r.update_scene(d, self.cam)
             out["rgb"] = r.render().copy()
             if self.rgb_noise is not None:
                 out["rgb_clean"], out["rgb"] = out["rgb"], self.rgb_noise.apply(self.rng, out["rgb"])
-        if "depth" in self.modes:
+        if "depth" in modes:
             r.enable_depth_rendering()
             r.update_scene(d, self.cam)
             out["depth"] = r.render().copy()
             r.disable_depth_rendering()
             if self.depth_noise is not None:
                 out["depth_clean"], out["depth"] = out["depth"], self.depth_noise.apply(self.rng, out["depth"])
-        if "segmentation" in self.modes:
+        if "segmentation" in modes:
             if self.seg_renderer is None:
                 self.seg_renderer = self._renderer(self.scene.model, msaa=False)
             sr = self.seg_renderer

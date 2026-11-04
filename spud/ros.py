@@ -277,7 +277,7 @@ class Bridge:
             self.last["camera"] = t
             for s in sc.sensors:
                 if isinstance(s, Camera):
-                    r = s.read()
+                    r = s.read(modes=("rgb", "depth"))  # ROS gets no masks, so don't render them
                     if "rgb" in r:
                         tx.publish(f"/{s.name}/image_raw", "sensor_msgs/Image", image_msg(t, self._frame_of(s), r["rgb"], "rgb8"))
                     if "depth" in r:
