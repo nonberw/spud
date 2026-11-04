@@ -1,5 +1,7 @@
 # SPUD
 
+[![CI](https://github.com/nonberw/spud/actions/workflows/ci.yml/badge.svg)](https://github.com/nonberw/spud/actions/workflows/ci.yml)
+
 > Run big robot simulations and models too big for your GPU, on a potato.
 > Tested on a laptop with a 4 GB RTX 3050 Ti. Then on a pretend laptop with 1 GB of VRAM, 4 GB of RAM and 2 CPU cores, because "works on my machine" isn't good enough.
 
@@ -202,7 +204,39 @@ The dogs walk the same on GPU physics as on CPU MuJoCo (0.56-0.57 m/s on both), 
 
 *Path-traced RGB (left) and the MuJoCo instance masks for the same frames (right).* The honest part: on this laptop only Mitsuba's CPU variant runs, at **about 2 s per 320x240 frame at 48 samples per pixel**. Mitsuba's GPU variant refuses NVIDIA drivers 565-569 (this laptop has 566.36), and a driver >= 570 should unlock it. Its fast CPU variant needs LLVM installed. So: great for a few thousand dataset frames overnight, not for real time.
 
-**4. ROS 2 bridge** (`spud ros scene.yaml`): a scene shows up in ROS like a real robot. It publishes `/clock`, `/tf`, `/<robot>/odom`, `/<robot>/joint_states`, `/<lidar>/scan` (LaserScan), `/<imu>/imu` (Imu, with covariances from the noise model) and `/<camera>/image_raw` + `/<camera>/depth`, and it listens on `/<robot>/cmd_vel`, so `teleop_twist_keyboard` drives the dogs. It talks to ROS via `rclpy` when ROS 2 is installed, or via **rosbridge** (WebSocket) to ROS 2 running in Docker, WSL or another machine, which is the realistic route on Windows. The honest part: the message layout and rates are tested against an in-memory transport, but **not yet against a live ROS 2 install**.
+**4. ROS 2 bridge** (`spud ros scene.yaml`): a scene shows up in ROS like a real robot. It publishes `/clock`, `/tf`, `/<robot>/odom`, `/<robot>/joint_states`, `/<lidar>/scan` (LaserScan), `/<imu>/imu` (Imu, with covariances from the noise model) and `/<camera>/image_raw` + `/<camera>/depth`, and it listens on `/<robot>/cmd_vel`, so `teleop_twist_keyboard` drives the dogs. It talks to ROS via `rclpy` when ROS 2 is installed, or via **rosbridge** (WebSocket) to ROS 2 running in Docker, WSL or another machine, which is the realistic route on Windows. **Verified against a live ROS 2 Jazzy** on every push: CI starts ROS 2 + rosbridge in Docker (`docker/ros2`), SPUD publishes `examples/ros_demo.yaml` into it, and `docker/ros2/check.sh` checks everything *from inside ROS*:
+
+| Checked by ROS 2 itself | Result in CI |
+|---|---|
+| Topics and message types | all 9 present, all types right (`sensor_msgs/msg/LaserScan`, `Imu`, `Image`, `nav_msgs/msg/Odometry`, ...) |
+| Rates (`ros2 topic hz`) | `/clock` 50.01 Hz, `/scan` 10.01 Hz, `/imu` 50.01 Hz, camera 5.00 Hz (sim at 1.00x real time) |
+| LaserScan | 166 of 360 rays hit the two walls |
+| Imu, standing still | mean linear_acceleration.z 9.80 m/s^2 |
+| Image | 160x120 `rgb8` |
+| `ros2 topic pub /zoomie0/cmd_vel` linear.x = 1.0 | the dog goes from 0.00 to **1.01 m/s** (from `/odom`) |
+
+Getting there took five CI runs, and the live checks found four real bugs that the in-memory tests had missed:
+
+- the odometry twist had the forward speed on z (MuJoCo's local-frame velocity again);
+- the bridge burst steps to catch up after a stall (ROS measured 66 Hz on a 50 Hz topic);
+- dogs walked off the rough-terrain patch and fell out of the world;
+- the first demo scene had a wall right where the dog was told to walk.
+
+Each one now has a regression test.
+
+Run it yourself with Docker:
+
+```bash
+docker build -t spud-ros2 docker/ros2
+```
+
+```bash
+docker run --rm -p 9090:9090 spud-ros2
+```
+
+```bash
+spud ros examples/ros_demo.yaml --transport rosbridge --url ws://localhost:9090
+```
 
 **Still not Isaac:** no soft bodies or deformables, no USD/Omniverse assets, no editor GUI. URDFs go through MuJoCo's importer, so their mesh paths must resolve.
 
@@ -321,9 +355,11 @@ spud/
   cli.py          `spud doctor | plan | bench | swarm | world | brain | view | scene | gen`
 examples/         yard.yaml (robots + sensors), blocks.yaml (dataset tabletop)
 scripts/benchmark.py   every headline number, plus benchmarks/spud.png
+docker/ros2/      ROS 2 Jazzy + rosbridge image, and the ROS-side live check CI runs
+.github/workflows CI: the test suite on Ubuntu + the live ROS 2 job
 tests/            bit-exactness, planner, sim determinism and resume, scenes, URDF import, lidar vs. a known wall,
                   IMU at rest, mask tightness, COCO validity, presets, noise statistics, GPU walking,
-                  photoreal/mask alignment, ROS topics and rates (38 tests)
+                  photoreal/mask alignment, ROS topics and rates, odometry vs. real motion (40 tests)
 ```
 
 ## Part of a series
