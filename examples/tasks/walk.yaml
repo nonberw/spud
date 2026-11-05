@@ -1,0 +1,7 @@
+# Teach the ZOOMIES quadruped to walk from zero. The shipped policy took ~1500 iterations;
+# a few hundred already gives a wobbly but real gait.
+task: walk
+envs: 1024
+iters: 300
+push: true
+randomize: true

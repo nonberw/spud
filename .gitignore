@@ -6,3 +6,5 @@ build/
 .cache/
 assets/_*
 MUJOCO_LOG.TXT
+runs/
+*.hdf5

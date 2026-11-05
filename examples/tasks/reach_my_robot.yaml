@@ -1,0 +1,13 @@
+# Bring your own robot: any fixed-base URDF / MJCF. Joints without motors get position servos.
+task: reach
+robot:
+  type: urdf
+  file: ../robots/three_link.urdf
+  ee: link3                   # the link whose tip should reach the target
+  ee_offset: [0, 0, 0.25]     # tip position in that link's frame
+  kp: 40
+envs: 1024
+iters: 120
+episode_seconds: 3
+success_radius: 0.03
+randomize: {damping: [0.7, 1.3], kp: [0.8, 1.2], mass: [0.8, 1.2]}

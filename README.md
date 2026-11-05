@@ -18,6 +18,11 @@
 - **Huge simulations.** **65,536 trained robots** walking at once at **~85k robot-steps/s**, in **0.1 GB** of RAM for the simulator, on all CPU cores (~24k on 2 cores). One big world with **1,024 robots** (18,432 DoF) works too, and everyone stays on their feet.
 - **Even weaker hardware.** `--vram 1 --ram 4 --threads 2` makes your machine pretend to be a potato. With those limits, a **3.15B-param** brain drives **16,384** robots in **0.69 GB** of VRAM, streaming its weights from disk.
 - **`spud plan` tells you before you start**: will it fit, in which mode, how fast. Its predictions landed within **-2% to +7%** of measured runs here.
+- **Robot learning (v0.4):**
+  - `spud train`: PPO on any task file. The ARMageddon arm learns to reach in **2.5 minutes** on a laptop (**98.8%**, 2.5 mm median error). Your own URDF arm works too, even with no motors in the file (**100%**).
+  - `spud teleop --input phone`: drive the arm **from your phone's browser**, with the robot's camera streamed to it.
+  - `spud demos`: record demos to robomimic-style HDF5.
+  - `spud bc`: clone the demos into a policy that places the cube in **88%** of fresh episodes.
 - **Isaac-lite (v0.2-0.3):** GPU physics (**463k robot-steps/s**, 5x the CPU), sensor noise, photoreal path-traced frames, a ROS 2 bridge, and scenes from one YAML file (robots, your own URDF/MJCF, objects, rough terrain, stairs, lights), sensors (RGB/depth/segmentation cameras, lidar, IMU, contacts), a domain-randomized dataset generator with COCO labels, an interactive viewer, and quality presets picked from your hardware. A yard with 10 robots, 33 objects and 5 sensors runs at **11x real time**.
 
 ## Why
@@ -240,6 +245,52 @@ spud ros examples/ros_demo.yaml --transport rosbridge --url ws://localhost:9090
 
 **Still not Isaac:** no soft bodies or deformables, no USD/Omniverse assets, no editor GUI. URDFs go through MuJoCo's importer, so their mesh paths must resolve.
 
+## v0.4: robot learning on a laptop
+
+Isaac Sim isn't just a simulator: it's where you train robots, drive them yourself and collect data. So SPUD does that now too. It covers the whole loop: train with RL, teleoperate from your phone, record demos, clone them into a policy, run it.
+
+![reach](assets/reach.gif)
+
+*The ARMageddon arm after 2.5 minutes of PPO on a laptop: a new random target every 4 seconds, 98.8% hit within 2 cm.*
+
+**Train (`spud train`).** A task file names the robot, the task and how much the world is randomized. Physics runs as 1,024 parallel copies on all CPU cores, through MuJoCo's rollout thread pool; the network and the PPO update run on the GPU. Every run folder gets `policy.pt`, `policy.onnx`, `progress.csv` and `curve.png`. The ONNX actor matches torch to 2e-6.
+
+| Task | Robot | Training | Result on 256 fresh episodes (new seed) |
+|---|---|---|---|
+| reach | ARMageddon 6-DoF arm | 150 PPO iterations, 3.7M steps, **2.5 min** | **98.8%** within 2 cm, median error **2.5 mm** |
+| reach | **your own URDF** (`examples/robots/three_link.urdf`, no motors in the file) | 120 iterations, 2.9M steps | **100%** within 3 cm, median error **1.8 mm** |
+| walk | ZOOMIES quadruped, from scratch | ZOOMIES' recipe (rewards, kicks, randomization) | the shipped dog came from this |
+
+Domain randomization is on by default: joint damping x0.7-1.3, servo stiffness x0.8-1.2, link masses x0.8-1.2, one of 16 randomized robots per env. Bring your own robot by pointing `robot.file` at a URDF and naming the link that should reach (`ee:`). If the file has no motors, SPUD gives every joint a position servo and turns on gravity compensation.
+
+**Drive it yourself (`spud teleop`).** From the keyboard in the MuJoCo window, or **from your phone**: `spud teleop --input phone` prints a link. Open it on the same Wi-Fi and you get two thumb-sticks, a grip button, save / redo, and the robot's camera streamed to the page.
+
+- **Safety.** The link carries a random token, so other people on your network can't drive your robot. Let go of the sticks, or lose the connection for 0.3 s, and the arm stops (dead-man's switch).
+- **Controls.** You steer the gripper in Cartesian space (`vx, vy, vz, yaw rate, grip`), not joint angles. ARMageddon's IK turns that into joint targets 50 times a second.
+- **Recording.** Placing the cube on the goal saves the episode automatically.
+
+**Record demos (`spud teleop --record` / `spud demos`).** Episodes go to one HDF5 file in robomimic's layout: `data/demo_k/{obs/*, actions, rewards, dones, states}`, plus `env_args`. Add `--camera front` for RGB. With no human at hand, `spud demos` lets a scripted expert record them. It places the cube in **200/200** episodes, 2.6 s each, and can add DART noise: noisy executed actions, clean recorded labels, so the data shows how to recover from small mistakes.
+
+**Clone them (`spud bc`).** An MLP predicts the next 10 actions at once (action chunking), and at run time the overlapping predictions are blended with ACT's temporal ensembling.
+
+| Demos (scripted expert) | Clean labels | DART (noise 0.1) |
+|---|---|---|
+| 20 | 28% | 24% |
+| 50 | 39% | 46% |
+| 200 | **88%** | **86%** |
+
+*Success on 100 fresh episodes, cube and goal at new random spots. Training takes about 2 minutes on the CPU for 200 demos.*
+
+Two honest notes:
+- **More demos matter a lot; DART barely does here.** The gaps between the two columns are within the noise of 100 episodes (about +/-7 points). The expert's own mistakes are rare in this task, so there isn't much to learn about recovering.
+- **88% is not 100%.** Of the 12 misses, 10 never get the cube off the ground (the grasp fails), 1 drops it away from the goal, and 1 is still carrying it when time runs out.
+
+![pick](assets/pick.gif)
+
+*The cloned policy (200 demos, no scripted logic left) picking and placing on fresh layouts.*
+
+The first scripted expert was a phase machine ("approach, descend, close, wait 20 steps, lift..."). It did fine itself (100%), but the cloned policy reached only **35%**: it hovered over the goal forever, because the policy can't see which phase it's in. Rewriting the expert as a smooth function of what it observes, with no hidden counter, fixed that. The lesson matters for human demos too: a policy can only copy what it can observe.
+
 ## Use it
 
 ```bash
@@ -310,7 +361,31 @@ spud gen examples/blocks.yaml --frames 200 --photoreal --spp 64
 spud ros examples/yard.yaml --transport rosbridge --url ws://localhost:9090
 ```
 
-Optional extras: `pip install "spud[gpu]"` (MuJoCo Warp), `"spud[photoreal]"` (Mitsuba 3), `"spud[ros]"` (roslibpy).
+Robot learning: train, watch, teleop, record, clone:
+
+```bash
+spud train examples/tasks/reach.yaml
+```
+
+```bash
+spud play runs/reach-<time>/policy.pt --gif reach.gif
+```
+
+```bash
+spud teleop --input phone --record my_demos.hdf5
+```
+
+```bash
+spud demos --episodes 200 --out demos.hdf5
+```
+
+```bash
+spud bc demos.hdf5 --out bc.pt
+```
+
+Your own robot: copy `examples/tasks/reach_my_robot.yaml`, point `robot.file` at your URDF and `ee:` at the link that should reach.
+
+Optional extras: `pip install "spud[gpu]"` (MuJoCo Warp), `"spud[photoreal]"` (Mitsuba 3), `"spud[ros]"` (roslibpy), `"spud[onnx]"` (ONNX export of trained policies).
 
 Every command takes `--vram`, `--ram`, `--threads` and `--cpu-only`, and the scene commands take `--quality`. Reproduce every number above:
 
@@ -350,16 +425,25 @@ spud/
   gpu.py          MuJoCo Warp worlds + the policy on the same GPU
   photoreal.py    scene -> Mitsuba 3 export, path-traced frames aligned with MuJoCo's camera
   ros.py          ROS 2 bridge: rclpy or rosbridge, LaserScan/Imu/Image/Odometry/TF/JointState, cmd_vel
+  tasks.py        training tasks: reach (any fixed-base URDF/MJCF arm, auto servos), walk (ZOOMIES)
+  rl.py           spud train / play: PPO loop, run folders, ONNX export, evaluation, GIFs
+  manip.py        pick-and-place with Cartesian control, the scripted expert, HDF5 demo writer
+  teleop.py       keyboard and phone teleop (tokened web page, camera stream, dead-man's switch)
+  bc.py           behavior cloning: action chunking + temporal ensembling, evaluation
   view.py         interactive viewer with live lidar and camera capture
   render.py       the GIFs
-  cli.py          `spud doctor | plan | bench | swarm | world | brain | view | scene | gen`
-examples/         yard.yaml (robots + sensors), blocks.yaml (dataset tabletop)
+  cli.py          `spud doctor | plan | bench | swarm | world | brain | view | scene | gen | ros |
+                  train | play | teleop | demos | bc`
+examples/         yard.yaml (robots + sensors), blocks.yaml (dataset tabletop), ros_demo.yaml,
+                  tasks/ (reach, reach_my_robot, walk), robots/three_link.urdf
 scripts/benchmark.py   every headline number, plus benchmarks/spud.png
 docker/ros2/      ROS 2 Jazzy + rosbridge image, and the ROS-side live check CI runs
 .github/workflows CI: the test suite on Ubuntu + the live ROS 2 job
 tests/            bit-exactness, planner, sim determinism and resume, scenes, URDF import, lidar vs. a known wall,
                   IMU at rest, mask tightness, COCO validity, presets, noise statistics, GPU walking,
-                  photoreal/mask alignment, ROS topics and rates, odometry vs. real motion (40 tests)
+                  photoreal/mask alignment, ROS topics and rates, odometry vs. real motion,
+                  servos hold, URDF auto-servos, PPO learns to reach, ONNX = torch, expert places the cube,
+                  HDF5 round trip, BC learns, phone server token / dead-man, teleop recording (50 tests)
 ```
 
 ## Part of a series

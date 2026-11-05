@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spud"
-version = "0.3.0"
-description = "Isaac-lite for weak laptops: YAML scenes, sensors, synthetic datasets, plus layer streaming for models too big for your GPU and 65k-robot simulation"
+version = "0.4.0"
+description = "Isaac-lite for weak laptops: train robots with RL, teleop them from your phone, record demos, clone them; YAML scenes, sensors, datasets, ROS 2, plus layer streaming and 65k-robot simulation"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "nonberw" }]
@@ -16,6 +16,7 @@ dependencies = [
   "torch>=2.2",
   "pillow>=10.0",
   "pyyaml>=6.0",
+  "h5py>=3.8",
   "armageddon @ git+https://github.com/nonberw/armageddon",
   "zoomies @ git+https://github.com/nonberw/zoomies",
 ]
@@ -25,6 +26,7 @@ dev = ["pytest>=8.0", "matplotlib>=3.8"]
 gpu = ["mujoco-warp>=3.17"]
 photoreal = ["mitsuba>=3.6"]
 ros = ["roslibpy>=2.0"]
+onnx = ["onnx>=1.16"]
 
 [project.scripts]
 spud = "spud.cli:main"

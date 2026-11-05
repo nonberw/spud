@@ -11,6 +11,13 @@
     spud gen   examples/blocks.yaml --frames 200 synthetic dataset: RGB, depth, masks, boxes (JSON)
     spud ros   examples/yard.yaml                publish the scene to ROS 2 (rclpy or rosbridge)
 
+  robot learning
+    spud train examples/tasks/reach.yaml         PPO on a task file (any URDF arm, or the dog): runs/<name>/
+    spud play  runs/reach-.../policy.pt --gif    evaluate a trained policy (PPO or BC), render a GIF
+    spud teleop --input phone --record d.hdf5    drive the arm from your phone or keyboard, record demos
+    spud demos --episodes 200 --out d.hdf5       or let the scripted expert record them (DART noise)
+    spud bc d.hdf5 --out bc.pt                   behavior cloning on the demos, then evaluate it
+
 Every command takes --vram/--ram/--threads/--cpu-only to pretend the machine is weaker.
 """
 
@@ -291,6 +298,111 @@ def cmd_ros(args):
         tx.close()
 
 
+def cmd_train(args):
+    from .rl import evaluate, train
+    from .tasks import load_task
+
+    task = load_task(args.task)
+    out = Path(args.out) if args.out else Path("runs") / f"{Path(args.task).stem}-{time.strftime('%m%d-%H%M%S')}"
+    print(f"training {task['task']} -> {out}/")
+    res = train(task, out, iters=args.iters, seed=args.seed, num_envs=args.envs,
+                device="cpu" if args.cpu_only else None)
+    print(f"done in {res['seconds'] / 60:.1f} min, {res['env_steps'] / 1e6:.1f}M env steps; "
+          f"best training success {res['best_success']:.1%} at iteration {res['best_iter']}")
+    ev = evaluate(out / "policy.pt", episodes=256)
+    print(f"evaluation on 256 fresh episodes: {ev}")
+    print(f"saved {out}/policy.pt, policy.onnx, progress.csv, curve.png")
+
+
+def cmd_play(args):
+    import torch
+
+    ck = torch.load(args.policy, map_location="cpu", weights_only=False)
+    if "chunk" in ck:  # a behavior-cloning policy for the pick task
+        from .bc import BCAgent, evaluate_bc
+
+        print(evaluate_bc(args.policy, episodes=args.episodes))
+        if args.gif:
+            _pick_gif(BCAgent(args.policy), args.gif)
+        return
+    from .rl import evaluate, render_gif
+
+    print(evaluate(args.policy, episodes=args.episodes))
+    if args.gif:
+        print(f"{render_gif(args.policy, args.gif)} frames -> {args.gif}")
+
+
+def _pick_gif(agent, path, episodes=3, seed=777):
+    from PIL import Image
+
+    from .manip import PickEnv
+
+    import mujoco
+
+    env = PickEnv(seed=seed)
+    cam = mujoco.MjvCamera()  # a three-quarter view: arm, cube and goal all in frame
+    cam.lookat[:] = [0.3, 0.0, 0.1]
+    cam.distance, cam.elevation, cam.azimuth = 1.25, -28, 145
+    frames = []
+    for ep in range(episodes):
+        obs = env.reset(seed=seed + ep)
+        agent.reset()
+        done = False
+        while not done:
+            obs, _, done, _ = env.step(agent.act(obs))
+            if env.steps % 3 == 0:
+                frames.append(Image.fromarray(env.render(cam, 360, 270)))
+    env.close()
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=60, loop=0)
+    print(f"{len(frames)} frames -> {path}")
+
+
+def cmd_teleop(args):
+    from . import teleop
+    from .manip import PickEnv
+
+    env = PickEnv(camera=args.camera)
+    if args.input == "phone":
+        dev = teleop.PhoneInput(port=args.port)
+        print(f"open this on your phone (same Wi-Fi):\n\n    {dev.url}\n")
+        print("If it doesn't load, allow Python through the Windows firewall for private networks.")
+    else:
+        dev = teleop.KeyboardInput()
+        print(teleop.__doc__.split("Phone:")[0])
+    try:
+        n = teleop.run(env, dev, record=args.record, window=not args.no_window)
+    except KeyboardInterrupt:
+        n = None
+    finally:
+        if hasattr(dev, "close"):
+            dev.close()
+        env.close()
+    if args.record:
+        print(f"demos saved to {args.record}" + (f" ({n} this session)" if n is not None else ""))
+
+
+def cmd_demos(args):
+    from .manip import DemoWriter, PickEnv, ScriptedExpert, collect
+
+    env = PickEnv(seed=args.seed, camera=args.camera)
+    w = DemoWriter(args.out, env.meta, append=not args.overwrite)
+    t0 = time.perf_counter()
+    res = collect(env, ScriptedExpert(env), w, args.episodes, seed=args.seed, noise=args.noise, log=print)
+    print(f"{res}; {w.count} demos in {args.out} ({time.perf_counter() - t0:.0f} s)")
+    w.close()
+    env.close()
+
+
+def cmd_bc(args):
+    from .bc import evaluate_bc, train_bc
+
+    out = args.out or str(Path(args.demos).with_suffix("")) + "_bc.pt"
+    res = train_bc(args.demos, out, chunk=args.chunk, epochs=args.epochs, max_demos=args.max_demos,
+                   device="cpu" if args.cpu_only else None)
+    print(f"trained on {res['demos']} demos ({res['samples']} samples) in {res['seconds']:.0f} s -> {out}")
+    print(f"evaluation, {args.episodes} fresh episodes: {evaluate_bc(out, episodes=args.episodes)}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spud", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -366,6 +478,37 @@ def main(argv=None):
             p.add_argument("--seed", type=int, default=0)
             p.add_argument("--photoreal", action="store_true", help="path-trace RGB with Mitsuba 3 (slow, pretty)")
             p.add_argument("--spp", type=int, default=64, help="samples per pixel for --photoreal")
+
+    p = add("train", cmd_train, help="train a policy with PPO on a task file")
+    p.add_argument("task", help="task YAML (examples/tasks/*.yaml)")
+    p.add_argument("--iters", type=int, help="PPO iterations (default: from the task file)")
+    p.add_argument("--envs", type=int, help="parallel envs (default: from the task file)")
+    p.add_argument("--out", help="run folder (default: runs/<task>-<time>)")
+    p.add_argument("--seed", type=int, default=0)
+    p = add("play", cmd_play, help="evaluate a trained policy, optionally render a GIF")
+    p.add_argument("policy", help="policy.pt from spud train, or a BC model from spud bc")
+    p.add_argument("--episodes", type=int, default=100)
+    p.add_argument("--gif")
+    p = add("teleop", cmd_teleop, help="drive the arm yourself and record demos")
+    p.add_argument("--input", default="keyboard", choices=["keyboard", "phone"])
+    p.add_argument("--record", help="HDF5 file to append demos to")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--camera", choices=["front", "top"], help="also record this camera's RGB in the demos")
+    p.add_argument("--no-window", action="store_true", help="phone only: no MuJoCo window on the laptop")
+    p = add("demos", cmd_demos, help="let the scripted expert record demos")
+    p.add_argument("--episodes", type=int, default=200)
+    p.add_argument("--out", default="demos.hdf5")
+    p.add_argument("--noise", type=float, default=0.1, help="DART: noise on executed actions, clean labels")
+    p.add_argument("--camera", choices=["front", "top"], help="also record this camera's RGB")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--overwrite", action="store_true")
+    p = add("bc", cmd_bc, help="behavior cloning on recorded demos")
+    p.add_argument("demos", help="HDF5 from spud teleop / spud demos")
+    p.add_argument("--out")
+    p.add_argument("--chunk", type=int, default=10, help="actions predicted per step (action chunking)")
+    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--max-demos", type=int)
+    p.add_argument("--episodes", type=int, default=100, help="evaluation episodes")
 
     args = ap.parse_args(argv)
     args.fn(args)

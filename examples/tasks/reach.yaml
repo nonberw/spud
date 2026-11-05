@@ -1,0 +1,11 @@
+# The ARMageddon arm learns to touch random targets. ~2.5 min on a laptop: spud train examples/tasks/reach.yaml
+task: reach
+robot: {type: arm, gripper: fixed}
+envs: 1024
+iters: 150
+episode_seconds: 4
+success_radius: 0.02          # meters
+randomize:                    # every env gets one of 16 randomized copies of the robot
+  damping: [0.7, 1.3]
+  kp: [0.8, 1.2]
+  mass: [0.8, 1.2]

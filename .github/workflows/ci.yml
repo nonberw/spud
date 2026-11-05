@@ -21,7 +21,7 @@ jobs:
       - name: Install (CPU torch)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev]" mitsuba roslibpy
+          pip install -e ".[dev,onnx]" mitsuba roslibpy onnxruntime
       - name: Tests (GPU tests skip themselves without CUDA)
         run: pytest -q
 

@@ -142,11 +142,12 @@ def _robot_spec(kind: str, rc: dict, base_dir: str) -> mujoco.MjSpec:
         from armageddon.mjcf import ARM_MATERIALS, arm_actuators, arm_xml
 
         chain = default_arm()
+        grip = rc.get("gripper", "parallel")
         xml = f"""<mujoco><compiler angle="radian" autolimits="true"/>
           <default><joint damping="3" armature="0.01"/><geom contype="1" conaffinity="0"/></default>
           <asset>{ARM_MATERIALS}</asset>
-          <worldbody>{arm_xml(chain, gripper="parallel")}</worldbody>
-          <actuator>{arm_actuators(chain, gripper="parallel")}</actuator></mujoco>"""
+          <worldbody>{arm_xml(chain, gripper=grip)}</worldbody>
+          <actuator>{arm_actuators(chain, gripper=grip)}</actuator></mujoco>"""
         child = mujoco.MjSpec.from_string(xml)
     elif kind in ("urdf", "mjcf"):
         path = Path(rc["file"])
