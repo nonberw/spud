@@ -1,6 +1,9 @@
 # SPUD
 
 [![CI](https://github.com/nonberw/spud/actions/workflows/ci.yml/badge.svg)](https://github.com/nonberw/spud/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](requirements.txt)
+[![MuJoCo](https://img.shields.io/badge/physics-MuJoCo-0b7285.svg)](https://mujoco.org)
 
 > Run big robot simulations and models too big for your GPU, on a potato.
 > Tested on a laptop with a 4 GB RTX 3050 Ti. Then on a pretend laptop with 1 GB of VRAM, 4 GB of RAM and 2 CPU cores, because "works on my machine" isn't good enough.
